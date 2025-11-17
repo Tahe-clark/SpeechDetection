@@ -1,0 +1,16 @@
+# Exclure tout ce qui n'est pas essentiel
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.git
+.gitignore
+README.md
+# Et surtout les anciens Dockerfiles si encore là
+Dockerfile
+.dockerignore
