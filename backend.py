@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-import whisper
+from faster_whisper import WhisperModel
 import tempfile
 import os
 
@@ -18,7 +18,7 @@ app.add_middleware(
 )
 
 # Modèle rapide (avec une précision de +30% en anglais)
-model = whisper.load_model("small.en")
+model = WhisperModel("small.en", device="cpu", compute_type="int8")
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
@@ -29,12 +29,12 @@ async def transcribe_audio(file: UploadFile = File(...)):
     tmp.close()
 
     try:
-        result = model.transcribe(tmp.name, language="en", fp16=False)
-        text = result["text"].strip()
+        segments, _ = model.transcribe(tmp.name, language="en", beam_size=5)
+        text = " ".join(seg.text for seg in segments).strip()
     except Exception as e:
-        text = f"Erreur : {e}"
+        text = f"Erreur Whisper : {str(e)}"
     finally:
         os.unlink(tmp.name)
 
-    return {"text": text}
+    return {"text": text or "Aucun son détecté"}
 
