@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🎙️ SpeechFlow</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🎙️ SpeechFlow</h1>
+    <p class="subtitle">Parlez naturellement, je transcris en temps réel</p>
+
+    <div class="mic-container" id="micContainer">
+      <div class="mic-icon">🎤</div>
+      <div class="pulse"></div>
+    </div>
+
+    <div class="controls">
+      <button id="start">▶️ Démarrer</button>
+      <button id="stop" disabled>⏹️ Arrêter</button>
+    </div>
+
+    <div class="result-box" id="result">
+      Cliquez sur <strong>Démarrer</strong> et parlez clairement...
+    </div>
+
+    <p class="status" id="status">Prêt à écouter</p>
+  </div>
+
+  <script>
+    let recorder, chunks = [];
+    const resultEl = document.getElementById("result");
+    const statusEl = document.getElementById("status");
+    const micContainer = document.getElementById("micContainer");
+
+    document.getElementById("start").onclick = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      chunks = [];
+
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.start();
+
+      document.getElementById("start").disabled = true;
+      document.getElementById("stop").disabled = false;
+      micContainer.classList.add("recording");
+      resultEl.innerHTML = "Écoute en cours...<span class='typing'></span>";
+      statusEl.textContent = "Enregistrement actif";
+    };
+
+    document.getElementById("stop").onclick = () => {
+      recorder.stop();
+      document.getElementById("stop").disabled = true;
+      document.getElementById("start").disabled = false;
+      micContainer.classList.remove("recording");
+      resultEl.innerHTML = "Transcription en cours...<span class='typing'></span>";
+      statusEl.textContent = "Traitement par l'IA...";
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const form = new FormData();
+        form.append("file", blob, "voice.webm");
+
+        try {
+          const res = await fetch("http://127.0.0.1:8000/transcribe", {
+            method: "POST",
+            body: form
+          });
+          const data = await res.json();
+          const text = data.text.trim() || "Aucun son détecté.";
+          
+          resultEl.innerHTML = text;
+          statusEl.textContent = "Transcription terminée";
+        } catch (err) {
+          resultEl.innerHTML = "❌ Erreur de connexion au serveur.";
+          statusEl.textContent = "Serveur indisponible";
+        }
+      };
+    };
+  </script>
+</body>
+</html>
