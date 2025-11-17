@@ -3,7 +3,11 @@
   "builds": [
     {
       "src": "backend.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python@latest",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "runtime": "python3.9"
+      }
     }
   ],
   "routes": [
@@ -14,7 +18,7 @@
   ],
   "functions": {
     "backend.py": {
-      "runtime": "@vercel/python@3.10"
+      "runtime": "@vercel/python@3.9"
     }
   }
 }
