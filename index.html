@@ -64,7 +64,7 @@
         form.append("file", blob, "voice.webm");
 
         try {
-          const res = await fetch("http://127.0.0.1:8000/transcribe", {
+          const res = await fetch("/transcribe", {
             method: "POST",
             body: form
           });
