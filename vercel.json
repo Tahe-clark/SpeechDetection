@@ -18,7 +18,7 @@
   ],
   "functions": {
     "backend.py": {
-      "runtime": "@vercel/python@3.9"
+      "runtime": "python3.9"
     }
   }
 }
