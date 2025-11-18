@@ -18,7 +18,7 @@ app.add_middleware(
 )
 
 # Modèle ultra-léger et rapide (fonctionne sur Render/Railway gratuit)
-model = WhisperModel("small.en", device="cpu", compute_type="int8")
+model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
