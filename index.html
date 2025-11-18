@@ -29,71 +29,62 @@
     <p class="status" id="status">Prêt à écouter</p>
   </div>
 
-  <script>
-    let recorder, chunks = [];
-    const resultEl = document.getElementById("result");
-    const statusEl = document.getElementById("status");
-    const micContainer = document.getElementById("micContainer");
+<script>
+  let recorder, chunks = [], timeoutId;
 
-    document.getElementById("start").onclick = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-        chunks = [];
+  document.getElementById("start").onclick = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      chunks = [];
 
-        recorder.ondataavailable = e => chunks.push(e.data);
-        recorder.start();
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.start(200);   // force un chunk toutes les 200 ms → très important sur Render !
 
-        // Petit délai pour stabiliser le micro
-        setTimeout(() => recorder.requestData(), 300);
+      document.getElementById("start").disabled = true;
+      document.getElementById("stop").disabled = false;
+      document.getElementById("micContainer").classList.add("recording");
+      document.getElementById("result").innerHTML = "Écoute en cours...<span class='typing'></span>";
+    } catch (e) {
+      document.getElementById("result").innerHTML = "Micro bloqué";
+    }
+  };
 
-        document.getElementById("start").disabled = true;
-        document.getElementById("stop").disabled = false;
-        micContainer.classList.add("recording");
-        resultEl.innerHTML = "Écoute en cours...<span class='typing'></span>";
-        statusEl.textContent = "Enregistrement actif";
-      } catch (err) {
-        resultEl.innerHTML = "❌ Micro bloqué (vérifiez les permissions)";
-      }
-    };
+  document.getElementById("stop").onclick = () => {
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+      clearTimeout(timeoutId);
+      document.getElementById("result").innerHTML = "Transcription...<span class='typing'></span>";
+    }
+  };
 
-    document.getElementById("stop").onclick = () => {
-      if (recorder && recorder.state === "recording") {
-        recorder.requestData();  // force le dernier chunk
-        recorder.stop();
-      }
+  recorder.onstop = async () => {
+    const blob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
+    const form = new FormData();
+    form.append("file", blob, "voice.webm");
 
+    // Timeout de sécurité 10 secondes
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const res = await fetch("/transcribe", {
+        method: "POST",
+        body: form,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const data = await res.json();
+      document.getElementById("result").innerHTML = data.text?.trim() || "Aucun son détecté";
+    } catch (err) {
+      clearTimeout(timeoutId);
+      document.getElementById("result").innerHTML = "Serveur trop lent – réessayez";
+    } finally {
       document.getElementById("stop").disabled = true;
       document.getElementById("start").disabled = false;
-      micContainer.classList.remove("recording");
-      resultEl.innerHTML = "Transcription en cours...<span class='typing'></span>";
-      statusEl.textContent = "Envoi au serveur...";
-    };
-
-    recorder.onstop = async () => {
-      const blob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
-      const form = new FormData();
-      form.append("file", blob, "voice.webm");
-
-      try {
-        const res = await fetch("/transcribe", {
-          method: "POST",
-          body: form
-        });
-
-        if (!res.ok) throw new Error("HTTP " + res.status);
-
-        const data = await res.json();
-        const text = data.text?.trim() || "Aucun son détecté";
-
-        resultEl.innerHTML = text;
-        statusEl.textContent = "Transcription terminée ✓";
-      } catch (err) {
-        console.error(err);
-        resultEl.innerHTML = "❌ Erreur serveur – réessayez";
-        statusEl.textContent = "Échec";
-      }
-    };
-  </script>
+      document.getElementById("micContainer").classList.remove("recording");
+    }
+  };
+</script>
 </body>
 </html>
