@@ -64,12 +64,13 @@
         form.append("file", blob, "voice.webm");
 
         try {
+          // ← LIGNE MAGIQUE QUI MARCHE LOCAL ET EN PROD
           const res = await fetch("/transcribe", {
             method: "POST",
             body: form
           });
           const data = await res.json();
-          const text = data.text.trim() || "Aucun son détecté.";
+          const text = data.text?.trim() || "Aucun son détecté.";
           
           resultEl.innerHTML = text;
           statusEl.textContent = "Transcription terminée";
