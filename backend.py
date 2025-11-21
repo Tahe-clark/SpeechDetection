@@ -14,12 +14,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Configuration Hugging Face (Whisper Small)
-API_URL = "https://api-inference.huggingface.co/models/openai/whisper-small"
+# --- MODIFICATION ICI ---
+# On utilise le modèle "Turbo" car le "Small" renvoie une erreur 410 (n'est plus dispo).
+# Le Turbo est gratuit, très rapide et fonctionne actuellement.
+API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
 HF_API_KEY = os.environ.get("HF_API_KEY")
 
-# 2. ROUTE D'ACCUEIL : C'est ce qui manquait ! 
-# Quand on ouvre le site, on lit et on affiche index.html
+# Route Accueil
 @app.get("/")
 async def serve_home():
     try:
@@ -28,7 +29,7 @@ async def serve_home():
     except FileNotFoundError:
         return HTMLResponse(content="<h1>Erreur: index.html introuvable</h1>", status_code=404)
 
-# 3. ROUTE STYLE : Pour que le site soit joli
+# Route CSS
 @app.get("/style.css")
 async def serve_css():
     try:
@@ -37,7 +38,7 @@ async def serve_css():
     except FileNotFoundError:
         return Response(status_code=404)
 
-# 4. ROUTE TRANSCRIPTION : La logique de traduction
+# Route Transcription
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     if not HF_API_KEY:
@@ -46,24 +47,29 @@ async def transcribe_audio(file: UploadFile = File(...)):
     headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     audio_data = await file.read()
 
-    # Système de réessai automatique (5 tentatives)
+    # Boucle de sécurité (5 essais)
     for attempt in range(5):
         try:
             response = requests.post(API_URL, headers=headers, data=audio_data)
             
             if response.status_code == 200:
                 result = response.json()
-                return {"text": result.get("text", "").strip() if isinstance(result, dict) else str(result)}
+                # Parfois le résultat est direct, parfois dans une liste
+                text = result.get("text", "") if isinstance(result, dict) else result[0].get("text", "")
+                return {"text": text.strip()}
             
             elif response.status_code == 503:
+                # Le modèle dort, on attend
                 wait_time = response.json().get("estimated_time", 10)
-                print(f"Le modèle charge... attente de {wait_time}s")
+                print(f"Modèle en chargement... {wait_time}s")
                 time.sleep(wait_time)
-                continue # On réessaie
+                continue
             
             else:
-                return {"text": f"❌ Erreur API: {response.status_code}"}
+                # Si on a une 410 ou autre, on l'affiche
+                return {"text": f"❌ Erreur API: {response.status_code} (Modèle indisponible)"}
+
         except Exception as e:
             return {"text": f"❌ Erreur interne: {str(e)}"}
             
-    return {"text": "❌ Trop de tentatives, réessayez plus tard."}
+    return {"text": "❌ Délai dépassé, réessayez."}
