@@ -3,88 +3,82 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>🎙️ SpeechFlow</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
-</head>
+  <title>SpeechFlow</title>
+  <link rel="stylesheet" href="style.css"> 
+  </head>
 <body>
   <div class="container">
-    <h1>🎙️ SpeechFlow</h1>
-    <p class="subtitle">Parlez naturellement, je transcris en temps réel</p>
+    <h1>🎙️ Traducteur Vocal</h1>
+    <p class="subtitle">Modèle : Whisper Small</p>
 
     <div class="mic-container" id="micContainer">
       <div class="mic-icon">🎤</div>
-      <div class="pulse"></div>
     </div>
 
     <div class="controls">
       <button id="start">▶️ Démarrer</button>
-      <button id="stop" disabled>⏹️ Arrêter</button>
+      <button id="stop" disabled>⏹️ Traduire</button>
     </div>
 
     <div class="result-box" id="result">
-      Cliquez sur <strong>Démarrer</strong> et parlez clairement...
+      Appuyez sur Démarrer...
     </div>
-
-    <p class="status" id="status">Prêt à écouter</p>
+    <p class="status" id="status">Prêt</p>
   </div>
 
-<script>
-  let recorder, chunks = [], timeoutId;
+  <script>
+    let recorder, chunks = [];
+    const resultEl = document.getElementById("result");
+    const statusEl = document.getElementById("status");
+    const micContainer = document.getElementById("micContainer");
 
-  document.getElementById("start").onclick = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-      chunks = [];
+    document.getElementById("start").onclick = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+        chunks = [];
+        
+        recorder.ondataavailable = e => chunks.push(e.data);
+        recorder.start();
+        
+        document.getElementById("start").disabled = true;
+        document.getElementById("stop").disabled = false;
+        micContainer.style.backgroundColor = "#fee2e2"; // Rouge léger
+        statusEl.textContent = "Enregistrement en cours...";
+        resultEl.innerHTML = "<i>Écoute...</i>";
+      } catch (err) {
+        alert("Erreur micro : " + err);
+      }
+    };
 
-      recorder.ondataavailable = e => chunks.push(e.data);
-      recorder.start(200);   // force un chunk toutes les 200 ms → très important sur Render !
-
-      document.getElementById("start").disabled = true;
-      document.getElementById("stop").disabled = false;
-      document.getElementById("micContainer").classList.add("recording");
-      document.getElementById("result").innerHTML = "Écoute en cours...<span class='typing'></span>";
-    } catch (e) {
-      document.getElementById("result").innerHTML = "Micro bloqué";
-    }
-  };
-
-  document.getElementById("stop").onclick = () => {
-    if (recorder && recorder.state !== "inactive") {
+    document.getElementById("stop").onclick = () => {
       recorder.stop();
-      clearTimeout(timeoutId);
-      document.getElementById("result").innerHTML = "Transcription...<span class='typing'></span>";
-    }
-  };
-
-  recorder.onstop = async () => {
-    const blob = new Blob(chunks, { type: "audio/webm;codecs=opus" });
-    const form = new FormData();
-    form.append("file", blob, "voice.webm");
-
-    // Timeout de sécurité 10 secondes
-    const controller = new AbortController();
-    timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    try {
-      const res = await fetch("/transcribe", {
-        method: "POST",
-        body: form,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      const data = await res.json();
-      document.getElementById("result").innerHTML = data.text?.trim() || "Aucun son détecté";
-    } catch (err) {
-      clearTimeout(timeoutId);
-      document.getElementById("result").innerHTML = "Serveur trop lent – réessayez";
-    } finally {
-      document.getElementById("stop").disabled = true;
       document.getElementById("start").disabled = false;
-      document.getElementById("micContainer").classList.remove("recording");
-    }
-  };
-</script>
+      document.getElementById("stop").disabled = true;
+      micContainer.style.backgroundColor = "#f3f4f6"; // Retour gris
+      statusEl.textContent = "Envoi au modèle Whisper Small...";
+      resultEl.innerHTML = "<i>Analyse en cours (peut prendre quelques secondes au premier essai)...</i>";
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const form = new FormData();
+        form.append("file", blob, "voice.webm");
+
+        // Détection automatique de l'URL (Local vs Production)
+        const isLocal = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+        const endpoint = isLocal ? "http://127.0.0.1:8000/transcribe" : "/transcribe";
+
+        try {
+          const res = await fetch(endpoint, { method: "POST", body: form });
+          const data = await res.json();
+          resultEl.innerText = data.text;
+          statusEl.textContent = "Terminé";
+        } catch (err) {
+          resultEl.innerText = "❌ Erreur de connexion au serveur.";
+          statusEl.textContent = "Erreur";
+        }
+      };
+    };
+  </script>
 </body>
 </html>
