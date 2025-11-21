@@ -1,9 +1,10 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
-import google.generativeai as genai
+import requests
 import os
-import tempfile
+import time
+import base64
 
 app = FastAPI()
 
@@ -14,10 +15,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration Google Gemini
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
+# Configuration Replicate
+REPLICATE_API_KEY = os.environ.get("REPLICATE_API_KEY")
+
+# Le modèle Whisper le plus récent sur Replicate
+REPLICATE_MODEL_URL = "https://api.replicate.com/v1/predictions"
+MODEL_ID = "openai/whisper:4676be329c299c824c8b355d142d2427b329ef31a9667f3743c39175a22c5496"
 
 @app.get("/")
 async def serve_home():
@@ -37,42 +40,59 @@ async def serve_css():
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    if not GOOGLE_API_KEY:
-        return {"text": "❌ Erreur : Clé Google manquante."}
+    if not REPLICATE_API_KEY:
+        return {"text": "❌ Erreur : Clé Replicate manquante."}
 
-    # Gemini a besoin d'un fichier physique temporaire pour bien traiter l'audio
-    suffix = ".webm" if "webm" in file.content_type else ".wav"
+    audio_content = await file.read()
     
-    try:
-        # 1. On crée un fichier temporaire
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            content = await file.read()
-            tmp.write(content)
-            tmp_path = tmp.name
+    # Encoder l'audio en Base64 (nécessaire pour Replicate)
+    base64_audio = base64.b64encode(audio_content).decode('utf-8')
+    data_uri = f"data:{file.content_type};base64,{base64_audio}"
 
-        # 2. On charge le fichier pour Google
-        audio_file = genai.upload_file(tmp_path)
+    headers = {
+        "Authorization": f"Token {REPLICATE_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-        # 3. On utilise le modèle PRO (Le plus intelligent pour les voix difficiles)
-        model = genai.GenerativeModel("gemini-1.5-pro")
+    # Créer la prédiction
+    response = requests.post(
+        REPLICATE_MODEL_URL,
+        headers=headers,
+        json={
+            "version": MODEL_ID,
+            "input": {
+                "audio": data_uri,
+                "transcription": "french" # Précision de la langue
+            }
+        }
+    )
 
-        # 4. Le PROMPT MAGIQUE : On explique à l'IA quoi faire
-        # C'est ici que Gemini bat Whisper : on lui donne du contexte.
-        prompt = """
-        Tu es un assistant expert en accessibilité et orthophonie.
-        Ta mission est de transcrire cet enregistrement audio en texte français.
-        IMPORTANT : La personne qui parle a des difficultés d'articulation (voix altérée).
-        - Utilise le contexte pour deviner les mots mal prononcés.
-        - Rétablis une syntaxe correcte si nécessaire pour que la phrase ait du sens.
-        - Ne réponds QUE par le texte transcrit, sans ajouter de commentaires ni de guillemets.
-        """
+    if response.status_code != 201:
+        return {"text": f"❌ Erreur Replicate (Start): {response.status_code} - {response.text}"}
 
-        response = model.generate_content([prompt, audio_file])
+    prediction_id = response.json().get('id')
+    
+    # Poll (attendre) le résultat
+    status = "starting"
+    while status not in ["succeeded", "failed"]:
+        await time.sleep(2) # Attendre 2 secondes entre les requêtes
         
-        # Nettoyage du fichier temporaire
-        os.unlink(tmp_path)
+        response = requests.get(
+            f"{REPLICATE_MODEL_URL}/{prediction_id}",
+            headers=headers
+        )
         
-        return {"text": response.text.strip()}
+        if response.status_code != 200:
+            return {"text": f"❌ Erreur Replicate (Poll): {response.status_code}"}
+        
+        data = response.json()
+        status = data.get('status')
+        print(f"Statut Replicate: {status}")
 
-    except Exception as e:
-        return {"text": f"❌ Erreur Google : {str(e)}"}
+    if status == "succeeded":
+        # Le texte est dans un format spécifique pour ce modèle
+        text = data['output']['text'].strip() if data.get('output') and 'text' in data['output'] else "Aucun texte transcrit."
+        return {"text": text}
+    else:
+        error = data.get('error', 'Erreur inconnue.')
+        return {"text": f"❌ Échec de la transcription (Replicate): {error}"}
