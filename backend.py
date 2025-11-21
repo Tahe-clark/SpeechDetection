@@ -2,9 +2,8 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 import requests
-import os
 import time
-import base64
+import os
 
 app = FastAPI()
 
@@ -15,12 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration Replicate
-REPLICATE_API_KEY = os.environ.get("REPLICATE_API_KEY")
-
-# Le modèle Whisper le plus récent sur Replicate
-REPLICATE_MODEL_URL = "https://api.replicate.com/v1/predictions"
-MODEL_ID = "openai/whisper:4676be329c299c824c8b355d142d2427b329ef31a9667f3743c39175a22c5496"
+# Cible le modèle Whisper TINY public de Hugging Face
+# Nous utilisons un modèle sans clé pour tester la connexion (qualité faible, mais stable pour le test)
+API_URL = "https://api-inference.huggingface.co/models/openai/whisper-tiny"
 
 @app.get("/")
 async def serve_home():
@@ -40,59 +36,33 @@ async def serve_css():
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    if not REPLICATE_API_KEY:
-        return {"text": "❌ Erreur : Clé Replicate manquante."}
-
-    audio_content = await file.read()
+    audio_data = await file.read()
+    headers = {} # Pas de clé API requise
     
-    # Encoder l'audio en Base64 (nécessaire pour Replicate)
-    base64_audio = base64.b64encode(audio_content).decode('utf-8')
-    data_uri = f"data:{file.content_type};base64,{base64_audio}"
+    # Logique de Réessai pour gérer le modèle qui "dort" (503)
+    for attempt in range(5):
+        try:
+            response = requests.post(API_URL, headers=headers, data=audio_data)
+            
+            # Cas 1 : Succès
+            if response.status_code == 200:
+                result = response.json()
+                text = result.get("text", "").strip() if isinstance(result, dict) else str(result)
+                # On ajoute une mention claire que la connexion est bonne
+                return {"text": f"✅ CONNEXION OK : {text}"} 
 
-    headers = {
-        "Authorization": f"Token {REPLICATE_API_KEY}",
-        "Content-Type": "application/json"
-    }
+            # Cas 2 : Le modèle charge (Erreur 503)
+            elif response.status_code == 503:
+                estimated_time = response.json().get("estimated_time", 5)
+                print(f"Le modèle dort. Attente de {estimated_time} secondes...")
+                time.sleep(estimated_time)
+                continue # On réessaie
 
-    # Créer la prédiction
-    response = requests.post(
-        REPLICATE_MODEL_URL,
-        headers=headers,
-        json={
-            "version": MODEL_ID,
-            "input": {
-                "audio": data_uri,
-                "transcription": "french" # Précision de la langue
-            }
-        }
-    )
+            # Cas 3 : Autre erreur (404, 410, etc.)
+            else:
+                return {"text": f"❌ Erreur API ({response.status_code}) : Le serveur est injoignable."}
 
-    if response.status_code != 201:
-        return {"text": f"❌ Erreur Replicate (Start): {response.status_code} - {response.text}"}
+        except Exception as e:
+            return {"text": f"❌ Erreur interne : {str(e)}"}
 
-    prediction_id = response.json().get('id')
-    
-    # Poll (attendre) le résultat
-    status = "starting"
-    while status not in ["succeeded", "failed"]:
-        await time.sleep(2) # Attendre 2 secondes entre les requêtes
-        
-        response = requests.get(
-            f"{REPLICATE_MODEL_URL}/{prediction_id}",
-            headers=headers
-        )
-        
-        if response.status_code != 200:
-            return {"text": f"❌ Erreur Replicate (Poll): {response.status_code}"}
-        
-        data = response.json()
-        status = data.get('status')
-        print(f"Statut Replicate: {status}")
-
-    if status == "succeeded":
-        # Le texte est dans un format spécifique pour ce modèle
-        text = data['output']['text'].strip() if data.get('output') and 'text' in data['output'] else "Aucun texte transcrit."
-        return {"text": text}
-    else:
-        error = data.get('error', 'Erreur inconnue.')
-        return {"text": f"❌ Échec de la transcription (Replicate): {error}"}
+    return {"text": "❌ Échec de la connexion après plusieurs tentatives (Serveur saturé)."}
